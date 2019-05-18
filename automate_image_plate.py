@@ -10,6 +10,12 @@ import time
 import easygui
 import pygame
 
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
+from os.path import basename
+
 # directory = 'D:/image_plate_test/'
 # inifile = 'D:/image_plate_test/automate_image_plate.ini'
 inifile = 'D:/Users/Scan/Documents/Users/LWFA/automate_image_plate files/automate_image_plate.ini'
@@ -34,6 +40,30 @@ def getFileNames(plates, directory, shotNumber):
                         sys.exit()
                     file[plates[i]].append(directory+files[j]+'/'+gelf[0])
     return file
+
+# https://stackoverflow.com/questions/3362600/how-to-send-email-attachments
+def send_mail(send_from: str, subject: str, text: str, 
+send_to: list, password, files= None):
+    default_address = 'imageplatescan@gmail.com'
+    send_to= default_address if not send_to else send_to
+    msg = MIMEMultipart()
+    msg['From'] = send_from
+    msg['To'] = ', '.join(send_to)  
+    msg['Subject'] = subject
+    msg.attach(MIMEText(text))
+    for f in files or []:
+        with open(f, "rb") as fil: 
+            ext = f.split('.')[-1:]
+            attachedfile = MIMEApplication(fil.read(), _subtype = ext)
+            attachedfile.add_header(
+                'content-disposition', 'attachment', filename = basename(f) )
+        msg.attach(attachedfile)
+    username = send_from
+    smtp = smtplib.SMTP(host="smtp.gmail.com", port = 587) 
+    smtp.starttls()
+    smtp.login(username,password)
+    smtp.sendmail(send_from, send_to, msg.as_string())
+    smtp.close()
     
 class ini_settings:
     '''does I/O shit'''
@@ -47,12 +77,16 @@ class ini_settings:
         self.platename = self.plates[0]
         self.defaults = {'CBS 1':[[1000,1],[900,1],[800,1],[700,1],[600,1]],
                  'CBS 2':[[1000,1],[900,1],[800,1],[700,1],[600,1]],
-                 'SR 1':[[1000,1],[800,1],[600,1]],
-                 'MS 1':[[1000,1],[800,1],[600,1]],
-                 'SR 2':[[1000,1],[800,1],[600,1]],
-                 'MS 2':[[1000,1],[800,1],[600,1]]}
+                 'SR 1':[[1000,1],[800,1],[600,3],[500,1]],
+                 'MS 1':[[1000,1],[800,1],[600,1],[500,1]],
+                 'SR 2':[[1000,1],[800,1],[600,3],[500,1]],
+                 'MS 2':[[1000,1],[800,1],[600,1],[500,1]]}
         self.readVoltageVals(config)
         self.files = {}
+        self.rereadconfig = False
+        self.email = config['MAIN']['emailAddress']
+        if self.email is not 'None':
+            self.password = input("enter password for imageplatescan@gmail.com")
         
     def readVoltageVals(self, config):
         voltlist = ast.literal_eval(config['MAIN']['pmtVoltage'])
@@ -126,6 +160,35 @@ class ini_settings:
         t2 = datetime.datetime.now()
         t2 = t2.timestamp()
         self.comment = str(int((t2-t1)/60)) + 'min'
+        
+    def sanityCheck(self):
+        questiontext = '''Are you sure you set the right time and shotnumber?
+    It's been %s from shot time: %s; shot number is %s
+    If the anything is wrong edit/save the .ini file and click 'Yeah it's good'''%(self.comment,self.date,self.shotnumber)
+        self.getComment()
+        if int(self.comment[:-3])>15:
+            self.rereadconfig = True
+            Q = easygui.ynbox(questiontext,
+                  'Something wrong?', ("Yeah it's good", 'Stop scan'))
+            if not Q:
+                sys.exit()
+        files = np.array(os.listdir(self.savedirectory)) 
+        prevshot = [fil for fil in files if self.shotnumber in fil]
+        if prevshot:
+            self.rereadconfig = True
+            Q = easygui.ynbox(questiontext,
+                  'Something wrong?', ("Yeah it's good", 'Stop scan'))
+            if not Q:
+                sys.exit()
+        [SRplate] = [item for item in self.plates if 'SR' in item]
+        prevSR = [fil for fil in files if str(int(self.shotnumber)-2) in fil and SRplate in fil]
+        if prevSR:
+            self.rereadconfig = True
+            Q = easygui.ynbox('''It looks like you're using the same SR plate number (%s)
+    as the last scan (previous shot number is %s) - is this okay?'''%(SRplate,str(int(self.shotnumber)-2)),
+                  'Something wrong?', ("Yeah it's good", 'Stop scan'))
+            if not Q:
+                sys.exit()
 
 class click_time:
     '''does the clicky stuff'''
@@ -157,7 +220,6 @@ class click_time:
     def clickButtons(self, savename, platename, typeables, specialnames = ['comment', 'pmtsetting']):
         'typeables = [comment, pmtv]'
         typedict = dict(zip(specialnames, typeables))
-        self.usegrid = False
         for elem in self.buttons.keys():
             if elem not in self.unusedbuttons:
                 time.sleep(1)
@@ -220,6 +282,14 @@ class monitor_scan:
                 if self.satQ:
                     self.runScan(ini, click)
                 else:
+                    if ini.email is not 'None':
+                        send_mail(send_from='imageplatescan@gmail.com',
+                        subject=ini.shotnumber + ' ' + ini.platename + ' finished',
+                        text='',
+                        send_to= ini.email,
+                        password = ini.password
+                        files= None
+                        )
                     if ini.platename == ini.plates[-1]:
                         print('scanning is over')
                         pygame.mixer.init()
@@ -235,6 +305,7 @@ class monitor_scan:
                         config = configparser.ConfigParser()
                         config.read(inifile)
                         ini.platename = ini.plates[i+1]
+                        click.usegrid = False
                         ini.readVoltageVals(config)
                         self.runScan(ini, click)
             time.sleep(2)
@@ -260,6 +331,10 @@ def run():
     config = configparser.ConfigParser()
     config.read(inifile)
     ini = ini_settings(config)
+    ini.sanityCheck()
+    if ini.rereadconfig:
+        config.read(inifile)
+        ini = ini_settings(config)
     click = click_time(config)
     mon = monitor_scan()
     mon.runScan(ini, click)
