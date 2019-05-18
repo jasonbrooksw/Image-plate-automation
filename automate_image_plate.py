@@ -8,6 +8,7 @@ import ast
 import datetime
 import time
 import easygui
+import pygame
 
 # directory = 'D:/image_plate_test/'
 # inifile = 'D:/image_plate_test/automate_image_plate.ini'
@@ -221,6 +222,9 @@ class monitor_scan:
                 else:
                     if ini.platename == ini.plates[-1]:
                         print('scanning is over')
+                        pygame.mixer.init()
+                        pygame.mixer.music.load("20th Century Fox Flute.mp3")
+                        pygame.mixer.music.play()
                         break
                     else:
                         [i] = [i for i, elem in enumerate(ini.plates) if elem == ini.platename]
