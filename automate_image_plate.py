@@ -162,33 +162,35 @@ class ini_settings:
         self.comment = str(int((t2-t1)/60)) + 'min'
         
     def sanityCheck(self):
-        questiontext = '''Are you sure you set the right time and shotnumber?
-    It's been %s from shot time: %s; shot number is %s
-    If the anything is wrong edit/save the .ini file and click 'Yeah it's good'''%(self.comment,self.date,self.shotnumber)
         self.getComment()
+        questiontext = ''
+        SRtext = ''
+        dialogbox = False
         if int(self.comment[:-3])>15:
-            self.rereadconfig = True
-            Q = easygui.ynbox(questiontext,
-                  'Something wrong?', ("Yeah it's good", 'Stop scan'))
-            if not Q:
-                sys.exit()
+            questiontext = '''    Are you sure you set the right time and shotnumber?
+    It's been %s from shot time: %s; shot number is %s'''%(self.comment,self.date,self.shotnumber)
+            dialogbox = True
+            
         files = np.array(os.listdir(self.savedirectory)) 
         prevshot = [fil for fil in files if self.shotnumber in fil]
+        
         if prevshot:
-            self.rereadconfig = True
-            Q = easygui.ynbox(questiontext,
-                  'Something wrong?', ("Yeah it's good", 'Stop scan'))
-            if not Q:
-                sys.exit()
+            questiontext = '''    Are you sure you set the right time and shotnumber?
+    It's been %s from shot time: %s; shot number is %s'''%(self.comment,self.date,self.shotnumber)
+            dialogbox = True
+                
         [SRplate] = [item for item in self.plates if 'SR' in item]
         prevSR = [fil for fil in files if str(int(self.shotnumber)-2) in fil and SRplate in fil]
+        
         if prevSR:
-            self.rereadconfig = True
-            Q = easygui.ynbox('''It looks like you're using the same SR plate number (%s)
-    as the last scan (previous shot number is %s) - is this okay?'''%(SRplate,str(int(self.shotnumber)-2)),
-                  'Something wrong?', ("Yeah it's good", 'Stop scan'))
-            if not Q:
-                sys.exit()
+            SRtext = '''\n\n    It looks like you're using the same SR plate number (%s)
+    as the last scan (previous shot number is %s) - is this okay?'''%(SRplate,str(int(self.shotnumber)-2))
+            dialogbox = True
+        if dialogbox:
+            Q = easygui.ynbox(questiontext+SRtext+'\n\n'+"    If anything is wrong edit/save the .ini file and click reload ini file",
+                  'Something wrong?', ("Reload ini file", 'Continue without reloading ini file'))
+            if Q:
+                self.rereadconfig = True
 
 class click_time:
     '''does the clicky stuff'''
