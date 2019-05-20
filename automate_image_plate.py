@@ -86,7 +86,7 @@ class ini_settings:
         self.rereadconfig = False
         self.email = config['MAIN']['emailAddress']
         if self.email is not 'None':
-            self.password = input("enter password for imageplatescan@gmail.com")
+            self.password = input("enter password for imageplatescan@gmail.com: ")
         
     def readVoltageVals(self, config):
         voltlist = ast.literal_eval(config['MAIN']['pmtVoltage'])
@@ -168,7 +168,7 @@ class ini_settings:
         dialogbox = False
         if int(self.comment[:-3])>15:
             questiontext = '''    Are you sure you set the right time and shotnumber?
-    It's been %s from shot time: %s; shot number is %s'''%(self.comment,self.date,self.shotnumber)
+    It's been %s from shot time: %s; shot number is %s'''%(self.comment,self.shotTime,self.shotnumber)
             dialogbox = True
             
         files = np.array(os.listdir(self.savedirectory)) 
@@ -176,11 +176,15 @@ class ini_settings:
         
         if prevshot:
             questiontext = '''    Are you sure you set the right time and shotnumber?
-    It's been %s from shot time: %s; shot number is %s'''%(self.comment,self.date,self.shotnumber)
+    It's been %s from shot time: %s; shot number is %s'''%(self.comment,self.shotTime,self.shotnumber)
             dialogbox = True
                 
-        [SRplate] = [item for item in self.plates if 'SR' in item]
-        prevSR = [fil for fil in files if str(int(self.shotnumber)-2) in fil and SRplate in fil]
+        SRplate = [item for item in self.plates if 'SR' in item]
+        prevSR = []
+        
+        if SRplate:
+            SRplate = SRplate[0]
+            prevSR = [fil for fil in files if str(int(self.shotnumber)-2) in fil and SRplate in fil]
         
         if prevSR:
             SRtext = '''\n\n    It looks like you're using the same SR plate number (%s)
@@ -196,6 +200,7 @@ class click_time:
     '''does the clicky stuff'''
     
     def __init__(self, config):
+        self.usegrid = False
         self.buttons = {}
         self.plates = dict(config['PLATES'])
         for key, value in dict(config['BUTTONS']).items():
@@ -289,7 +294,7 @@ class monitor_scan:
                         subject=ini.shotnumber + ' ' + ini.platename + ' finished',
                         text='',
                         send_to= ini.email,
-                        password = ini.password
+                        password = ini.password,
                         files= None
                         )
                     if ini.platename == ini.plates[-1]:
@@ -297,6 +302,7 @@ class monitor_scan:
                         pygame.mixer.init()
                         pygame.mixer.music.load("20th Century Fox Flute.mp3")
                         pygame.mixer.music.play()
+                        time.sleep(30)
                         break
                     else:
                         [i] = [i for i, elem in enumerate(ini.plates) if elem == ini.platename]
