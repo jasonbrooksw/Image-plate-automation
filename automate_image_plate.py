@@ -9,6 +9,7 @@ import datetime
 import time
 import easygui
 import pygame
+from shutil import copyfile
 
 import smtplib
 from email.mime.text import MIMEText
@@ -19,7 +20,6 @@ from os.path import basename
 # directory = 'D:/image_plate_test/'
 # inifile = 'D:/image_plate_test/automate_image_plate.ini'
 inifile = 'D:/Users/Scan/Documents/Users/LWFA/automate_image_plate files/automate_image_plate.ini'
-
 
 def getFileNames(plates, directory, shotNumber):
     '''gets file names of plates with specified shot number'''
@@ -40,6 +40,55 @@ def getFileNames(plates, directory, shotNumber):
                         sys.exit()
                     file[plates[i]].append(directory+files[j]+'/'+gelf[0])
     return file
+
+def readLaunchFolder(ini, targetname):
+    files = os.listdir(ini.savedirectory)
+    try:
+        [folder] = [elem for elem in files if targetname in elem and ini.shotnumber in elem and '.' not in elem]
+        folderfile = os.listdir(ini.savedirectory+folder)
+        [proctif] = [elem for elem in folderfile if targetname in elem and ini.shotnumber in elem and '.tif' in elem]
+    except:
+        print("Can't find folder created by launch button. Waiting...")
+        t1 = datetime.datetime.now()
+        t1 = t1.timestamp()
+        while True:
+            time.sleep(2)
+            t2 = datetime.datetime.now()
+            t2 = t2.timestamp()
+            if t2-t1>60 and t2-t1<=62:
+                send_mail(send_from = 'imageplatescan@gmail.com',
+                subject = "Launch appears to be taking a while - check scanner",
+                text = '',
+                send_to = ini.email,
+                password = ini.password,
+                files = None
+                )
+            try:
+                [folder] = [elem for elem in files if targetname in elem and ini.shotnumber in elem and '.' not in elem]
+                folderfile = os.listdir(ini.savedirectory+folder)
+                [proctif] = [elem for elem in folderfile if targetname in elem and ini.shotnumber in elem and '.tif' in elem]
+                break
+            except:
+                continue
+    [rawgel] = [elem for elem in folderfile if targetname in elem and ini.shotnumber in elem and '.gel' in elem]
+    proctif = ini.savedirectory+folder+'/'+rawgel
+    rawgel = ini.savedirectory+folder+'/'+rawgel
+    return proctif, rawgel
+
+def copyTiff(ini, proctif):
+    basepath = os.path.split(ini.savedirectory[:-1])[0]
+    fullpath = basepath + '/organized IP data/'
+    if ini.platename in ['SR 1', 'SR 2', 'MS 1', 'MS 2', 'CBS 1', 'CBS 2']:
+        folder = fullpath+ini.platename[:-2]+'/'+ini.shotnumber+'/'
+        if 'CBS' in ini.platename:
+            fname = folder+ini.platename[-1]+'_'+str(ini.scannumber)+'.tiff'
+        else:
+            fname = folder+str(ini.scannumber)+'.tiff'
+        if os.path.isdir(folder):
+            copyfile(proctif, fname)
+        else:
+            os.makedirs(folder)
+            copyfile(proctif, fname)
 
 # https://stackoverflow.com/questions/3362600/how-to-send-email-attachments
 def send_mail(send_from: str, subject: str, text: str, 
@@ -77,9 +126,9 @@ class ini_settings:
         self.platename = self.plates[0]
         self.defaults = {'CBS 1':[[1000,1],[900,1],[800,1],[700,1],[600,1]],
                  'CBS 2':[[1000,1],[900,1],[800,1],[700,1],[600,1]],
-                 'SR 1':[[1000,1],[800,1],[600,3],[500,1]],
+                 'SR 1':[[1000,1],[800,1],[600,1],[500,1]],
                  'MS 1':[[1000,1],[800,1],[600,1],[500,1]],
-                 'SR 2':[[1000,1],[800,1],[600,3],[500,1]],
+                 'SR 2':[[1000,1],[800,1],[600,1],[500,1]],
                  'MS 2':[[1000,1],[800,1],[600,1],[500,1]]}
         self.readVoltageVals(config)
         self.files = {}
@@ -120,34 +169,22 @@ class ini_settings:
                             vdict[v].append(v)
                         else:
                             vdict[v] = [v]
-                        
-            for i, (voltage, freq) in enumerate(self.pmtvoltage):
-                #this section isn't written too well - could probably be improved
-                stop = 'bad' 
-                if len(vdict[str(voltage)]) == freq and voltage != self.pmtvoltage[-1][0]:
-                    for j in range(i+1, len(self.pmtvoltage)):
-                            if str(self.pmtvoltage[j][0]) in vdict.keys():
-                                if len(vdict[str(self.pmtvoltage[j][0])]) < freq:
-                                    stop = j
-                                    break
-                            else:
-                                stop = j
-                                break
-                    if stop != 'bad':
-                        pmtv = str(self.pmtvoltage[stop][0])
-                        break
-                    else:
-                        continue
+            for i,(voltage, freq) in enumerate(self.pmtvoltage):
+                filefreq = len(vdict[str(voltage)])
+                if filefreq < freq:
+                    pmtv = str(voltage)
+                    break
                 elif voltage == self.pmtvoltage[-1][0]:
                     pmtv = str(voltage)
                     break
-                elif len(vdict[str(voltage)]) < freq:
-                    pmtv = str(voltage)
-        else:
-            for voltage, freq in self.pmtvoltage:
-                if freq > 0:
-                    pmtv = str(voltage)
+                elif filefreq == freq and str(self.pmtvoltage[i+1][0]) not in vdict.keys():
+                    pmtv = str(self.pmtvoltage[i+1][0])
                     break
+        else:
+            pmtv = str(self.pmtvoltage[0][0])
+        if int(pmtv) < 500 or int(pmtv)> 1000:
+            print('assigned pmt voltage is not in allowed range')
+            sys.exit()
         self.pmtv = pmtv
         
     def getSaveName(self):
@@ -166,7 +203,7 @@ class ini_settings:
         questiontext = ''
         SRtext = ''
         dialogbox = False
-        if int(self.comment[:-3])>15:
+        if abs(int(self.comment[:-3]))>15:
             questiontext = '''    Are you sure you set the right time and shotnumber?
     It's been %s from shot time: %s; shot number is %s'''%(self.comment,self.shotTime,self.shotnumber)
             dialogbox = True
@@ -266,7 +303,7 @@ class monitor_scan:
         
     def clickControl(self, ini, click):
         while True:
-            files=os.listdir(ini.savedirectory)
+            files = os.listdir(ini.savedirectory)
             targetname = ini.platename + ' ' + str(ini.scannumber)
             plateloc=[elem for elem in files if targetname in elem and ini.shotnumber in elem and '.tif' in elem]
             if plateloc:
@@ -277,11 +314,8 @@ class monitor_scan:
                 else:
                     self.waittime = 65
                 time.sleep(self.waittime)
-                files=os.listdir(ini.savedirectory)
-                [folder]=[elem for elem in files if targetname in elem and ini.shotnumber in elem and '.' not in elem]
-                folderfile = os.listdir(ini.savedirectory+folder)
-                [rawgel]=[elem for elem in folderfile if targetname in elem and ini.shotnumber in elem and '.gel' in elem]
-                rawgel = ini.savedirectory+folder+'/'+rawgel
+                proctif, rawgel = readLaunchFolder(ini, targetname)
+                copyTiff(ini, proctif)
                 print(rawgel)
                 self.satQ = gel_op(rawgel).saturationCompare()
                 pywinauto.mouse.click(coords = click.buttons['return'])
@@ -317,7 +351,7 @@ class monitor_scan:
                         ini.readVoltageVals(config)
                         self.runScan(ini, click)
             time.sleep(2)
-
+            
 class gel_op:
     '''gel file operations class'''
     
@@ -340,9 +374,10 @@ def run():
     config.read(inifile)
     ini = ini_settings(config)
     ini.sanityCheck()
-    if ini.rereadconfig:
+    while ini.rereadconfig:
         config.read(inifile)
         ini = ini_settings(config)
+        ini.sanityCheck()
     click = click_time(config)
     mon = monitor_scan()
     mon.runScan(ini, click)
