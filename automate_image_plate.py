@@ -1,6 +1,7 @@
 import tifffile as tif
 import numpy as np
 import pywinauto
+from pywinauto.application import Application
 import os
 import sys
 import configparser
@@ -9,13 +10,14 @@ import datetime
 import time
 import easygui
 import pygame
-from shutil import copyfile
+import subprocess
 
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.application import MIMEApplication
 from os.path import basename
+import string
 
 # directory = 'D:/image_plate_test/'
 # inifile = 'D:/image_plate_test/automate_image_plate.ini'
@@ -48,21 +50,24 @@ def readLaunchFolder(ini, targetname):
         folderfile = os.listdir(ini.savedirectory+folder)
         [proctif] = [elem for elem in folderfile if targetname in elem and ini.shotnumber in elem and '.tif' in elem]
     except:
-        print("Can't find folder created by launch button. Waiting...")
+        print("Waiting for launch to finish...")
         t1 = datetime.datetime.now()
         t1 = t1.timestamp()
         while True:
             time.sleep(2)
+            files = os.listdir(ini.savedirectory)
             t2 = datetime.datetime.now()
             t2 = t2.timestamp()
             if t2-t1>60 and t2-t1<=62:
-                send_mail(send_from = 'imageplatescan@gmail.com',
-                subject = "Launch appears to be taking a while - check scanner",
-                text = '',
-                send_to = ini.email,
-                password = ini.password,
-                files = None
-                )
+                print("Launch appears to be taking a while")
+                if ini.email != 'None':
+                    send_mail(send_from = 'imageplatescan@gmail.com',
+                    subject = "Launch appears to be taking a while - check scanner",
+                    text = '',
+                    send_to = ini.email,
+                    password = ini.password,
+                    files = None
+                    )
             try:
                 [folder] = [elem for elem in files if targetname in elem and ini.shotnumber in elem and '.' not in elem]
                 folderfile = os.listdir(ini.savedirectory+folder)
@@ -70,10 +75,26 @@ def readLaunchFolder(ini, targetname):
                 break
             except:
                 continue
+    print("found file created by launch")
     [rawgel] = [elem for elem in folderfile if targetname in elem and ini.shotnumber in elem and '.gel' in elem]
-    proctif = ini.savedirectory+folder+'/'+rawgel
+    proctif = ini.savedirectory+folder+'/'+proctif
     rawgel = ini.savedirectory+folder+'/'+rawgel
     return proctif, rawgel
+
+# https://stackoverflow.com/questions/14894993/running-windows-shell-commands-with-python
+def run_win_cmd(cmd):
+    result = []
+    process = subprocess.Popen(cmd,
+                               shell=True,
+                               stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE)
+    for line in process.stdout:
+        result.append(line)
+    errcode = process.returncode
+    print(cmd)
+    print(line)
+    if errcode is not None:
+        raise Exception('cmd %s failed', cmd)
 
 def copyTiff(ini, proctif):
     basepath = os.path.split(ini.savedirectory[:-1])[0]
@@ -84,11 +105,11 @@ def copyTiff(ini, proctif):
             fname = folder+ini.platename[-1]+'_'+str(ini.scannumber)+'.tiff'
         else:
             fname = folder+str(ini.scannumber)+'.tiff'
-        if os.path.isdir(folder):
-            copyfile(proctif, fname)
-        else:
+        cmd = 'copy ' + '"'+ proctif + '"' + ' ' + '"' + fname + '"'
+        cmd = cmd.replace('/','\\')
+        if not os.path.isdir(folder):
             os.makedirs(folder)
-            copyfile(proctif, fname)
+        run_win_cmd(cmd)
 
 # https://stackoverflow.com/questions/3362600/how-to-send-email-attachments
 def send_mail(send_from: str, subject: str, text: str, 
@@ -133,9 +154,23 @@ class ini_settings:
         self.readVoltageVals(config)
         self.files = {}
         self.rereadconfig = False
+        self.readDramaticMusic(config)
         self.email = config['MAIN']['emailAddress']
-        if self.email is not 'None':
+        if self.email != 'None':
             self.password = input("enter password for imageplatescan@gmail.com: ")
+            
+    def readDramaticMusic(self, config):
+        '''this is the dumbest thing I have ever made'''
+        val = config['MAIN']['dramaticMusic']
+        self.dramaticmusic = []
+        words = [item.replace('[','').replace(',','').replace(']','') for item in val]
+        letters = [item for item in words if item]
+        start = 0
+        for i, l in enumerate(letters):
+            if l.isdigit():
+                self.dramaticmusic.append("".join(letters[start:i+1]))
+                start = i+2
+            i += 1
         
     def readVoltageVals(self, config):
         voltlist = ast.literal_eval(config['MAIN']['pmtVoltage'])
@@ -237,69 +272,67 @@ class click_time:
     '''does the clicky stuff'''
     
     def __init__(self, config):
-        self.usegrid = False
-        self.buttons = {}
         self.plates = dict(config['PLATES'])
-        for key, value in dict(config['BUTTONS']).items():
-            self.buttons[key] = ast.literal_eval(value)
+        self.needednames = ['mQFileNameEdit','mQPMTEdit','mQCommentEdit']
     
-    def getUnusedButtons(self, platename, scannumber):
-        needednames = ['filenamestart', 'comment', 'pmtsetting', 'runscan']
-        resregionbuttons = []
+    def getButtons(self, platename, scannumber):
+        self.buttons = self.needednames[:]
         if scannumber == 1:
             for key, val in self.plates.items():
                 if val == platename:
                     platenum = key[-1]
-                    scale = self.plates['resscale' + platenum]
+                    scale = self.plates['resscale' + platenum][:-2]
+                    scale = 'p' + scale + 'Button'
                     scanreg = self.plates['scanregion' + platenum]
-                    resregionbuttons.append(scale)
-                    if 'grid' not in scanreg:
-                        resregionbuttons.append(scanreg)
-                        break
-                    else:
-                        resregionbuttons.append('grid')
-                        break
-        self.unusedbuttons = [key for key in self.buttons.keys() if key not in needednames and key not in resregionbuttons]
+                    if 'grid' not in scanreg and 'free' not in scanreg:
+                        scanreg = 'all' + scanreg + 'RadioButton'
+                    elif 'grid' in scanreg:
+                        scanreg = ['gridRadioButton', scanreg[-1]]
+                    self.buttons.append(scale)
+                    self.buttons.append(scanreg)
         
-    def clickButtons(self, savename, platename, typeables, specialnames = ['comment', 'pmtsetting']):
-        'typeables = [comment, pmtv]'
-        typedict = dict(zip(specialnames, typeables))
-        for elem in self.buttons.keys():
-            if elem not in self.unusedbuttons:
-                time.sleep(1)
-                pixcoord = self.buttons[elem]
-                if elem in specialnames:
-                    pywinauto.mouse.double_click(coords = pixcoord)
-                    text = typedict[elem]
-                    [pywinauto.keyboard.KeyAction(char).run() for char in text]
-                elif elem == 'filenamestart':
-                    pywinauto.mouse.press(coords = self.buttons['filenamestart'])
-                    pywinauto.mouse.release(coords = self.buttons['filenameend'])
-                    text = savename
-                    [pywinauto.keyboard.KeyAction(char).run() for char in text]
-                elif elem == 'grid':
-                    self.usegrid = True
-                    pywinauto.mouse.click(coords = self.buttons['fullregion'])
-                    pywinauto.mouse.click(coords = pixcoord)
-                    pywinauto.mouse.press(coords = self.buttons['gridstart'])
-                    [p] = [key for key, value in self.plates.items() if value == platename]
-                    num = self.plates['scanregion'+p[-1]][-1]
-                    pywinauto.mouse.release(coords = self.buttons['gridend' + num])
-                else:
-                    pywinauto.mouse.click(coords = pixcoord)
-                    
+    def clickButtons(self, app, savename, comment, pmtv):
+        dlg_spec = app.window(title='Typhoon FLA 7000', found_index=0)
+        namedict = dict(zip(self.needednames,[savename, pmtv, comment]))
+        for elem in self.buttons:
+            time.sleep(1)
+            if 'grid' in elem[0]:
+                dlg_spec['all20x40RadioButton'].click()
+                dlg_spec[elem].click()
+                gridcol=dict(
+                    zip(
+                        list(string.ascii_uppercase[:16]),
+                        sorted(range(16),reverse=True)
+                    )
+                )
+                press_coords=(402,100)
+                release_coords = (press_coords[0] - gridcol[elem[1]]*24,press_coords[1])
+                dlg_spec['mQSamplingArea'].drag_mouse(press_coords=press_coords,
+                                                   release_coords=release_coords)
+            elif elem in self.needednames:
+                dlg_spec[elem].click()
+                dlg_spec[elem].type_keys('^a'+namedict[elem], with_spaces = True)
+            else:
+                dlg_spec[elem].click()
+        dlg_spec['startButton'].click()
+            
 class monitor_scan: 
     
     def __init__(self):
-        self.waittime = 65
+        self.app = Application().connect(title = 'Typhoon FLA 7000')        
     
     def runScan(self, ini, click):
         ini.readPlateFiles()
         ini.getPmtValue()
         ini.getSaveName()
         ini.getComment()
-        click.getUnusedButtons(ini.platename, ini.scannumber)
-        click.clickButtons(ini.savename, ini.platename, [ini.comment, ini.pmtv])
+        click.getButtons(ini.platename, ini.scannumber)
+        click.clickButtons(self.app, ini.savename, ini.comment, ini.pmtv)
+        if ini.scannumber == 1 and ini.platename in ini.dramaticmusic:
+            pygame.mixer.init()
+            pygame.mixer.music.load("Drool of Fats.mp3")
+            pygame.mixer.music.play()
+            pygame.mixer.music.fadeout(35*1000)
         
     def clickControl(self, ini, click):
         while True:
@@ -308,22 +341,23 @@ class monitor_scan:
             plateloc=[elem for elem in files if targetname in elem and ini.shotnumber in elem and '.tif' in elem]
             if plateloc:
                 time.sleep(1)
-                pywinauto.mouse.click(coords = click.buttons['launch'])
-                if click.usegrid:
-                    self.waittime = 45
-                else:
-                    self.waittime = 65
-                time.sleep(self.waittime)
+                dlg_spec = self.app.window(title='Typhoon FLA 7000', found_index = 0)
+                dlg_spec['mQLaunchButton'].click()
                 proctif, rawgel = readLaunchFolder(ini, targetname)
                 copyTiff(ini, proctif)
-                print(rawgel)
+                print(proctif)
                 self.satQ = gel_op(rawgel).saturationCompare()
-                pywinauto.mouse.click(coords = click.buttons['return'])
+                second_window = self.app.window(title='Typhoon FLA 7000', found_index = 1)
+                while second_window.exists():
+                    dlg_spec = self.app.window(title='Typhoon FLA 7000', found_index = 0)
+                    dlg_spec['mQReturnButton'].click()
+                    time.sleep(2)
+                    second_window = self.app.window(title='Typhoon FLA 7000', found_index = 1)
                 time.sleep(1)
                 if self.satQ:
                     self.runScan(ini, click)
                 else:
-                    if ini.email is not 'None':
+                    if ini.email != 'None':
                         send_mail(send_from='imageplatescan@gmail.com',
                         subject=ini.shotnumber + ' ' + ini.platename + ' finished',
                         text='',
@@ -347,7 +381,6 @@ class monitor_scan:
                         config = configparser.ConfigParser()
                         config.read(inifile)
                         ini.platename = ini.plates[i+1]
-                        click.usegrid = False
                         ini.readVoltageVals(config)
                         self.runScan(ini, click)
             time.sleep(2)
